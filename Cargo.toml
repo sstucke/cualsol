@@ -1,0 +1,27 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/engine",
+    "crates/spider",
+    "crates/freecell",
+    "crates/klondike",
+    "crates/hearts",
+    "crates/app",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "GPL-3.0-or-later"
+publish = false
+
+[workspace.dependencies]
+cualsol-engine = { path = "crates/engine" }
+cualsol-spider = { path = "crates/spider" }
+cualsol-freecell = { path = "crates/freecell" }
+cualsol-klondike = { path = "crates/klondike" }
+cualsol-hearts = { path = "crates/hearts" }
+eframe = "0.33"
+serde = { version = "1", features = ["derive"] }
+thiserror = "2"
+toml = "0.9"

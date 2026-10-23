@@ -1,0 +1,12 @@
+[package]
+name = "cualsol-spider"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "Spider de 1, 2 y 4 palos"
+
+[dependencies]
+cualsol-engine.workspace = true
+serde.workspace = true
+thiserror.workspace = true

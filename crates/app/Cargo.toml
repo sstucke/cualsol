@@ -1,0 +1,19 @@
+[package]
+name = "cualsol"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "Cual Solitaire"
+
+[dependencies]
+cualsol-engine.workspace = true
+cualsol-freecell.workspace = true
+cualsol-hearts.workspace = true
+cualsol-klondike.workspace = true
+cualsol-spider.workspace = true
+eframe.workspace = true
+image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
+resvg = "0.45"
+serde.workspace = true
+toml.workspace = true

@@ -1,0 +1,4 @@
+/target
+/opciones.toml
+/partida.toml
+**/*.rs.bk

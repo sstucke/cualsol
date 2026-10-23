@@ -1,0 +1,30 @@
+Cual Solitaire
+SPDX-License-Identifier: GPL-3.0-or-later
+
+Copyright (C) 2026 Cual Solitaire authors
+
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU General Public License as published by
+the Free Software Foundation, either version 3 of the License, or
+(at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License
+along with this program. If not, see <https://www.gnu.org/licenses/>.
+
+The card decks under assets/carddecks/ come from KDE libkdegames
+(https://invent.kde.org/games/libkdegames) and stay under the license
+named in each deck's COPYRIGHT, COPYING or AUTHORS file:
+
+  standard, xskat-french, xskat-german   GPL-2.0-or-later
+  penguins                               GPL-3.0-or-later
+                                         (Tux notice in COPYRIGHT)
+  tigullio                               LGPL-2.0-or-later
+  nicu-ornamental, nicu-white            public domain
+
+They are distributed together with this program under GPL-3.0-or-later
+where that license allows it. The Konqi deck is not included.

@@ -1,0 +1,23 @@
+# Tema de Cual Solitaire.
+# Las rutas son relativas a esta carpeta. Si falta un archivo, el juego
+# dibuja cartas y tapete con los colores y el estilo de abajo.
+
+name = "Clásico"
+
+# Tapete. table_image gana sobre table_color cuando el archivo existe.
+table_color = "#146C43"
+# table_image = "tapete.png"
+
+# Reverso. back_image gana sobre color y patrón.
+back_color = "#1B3A6B"
+back_pattern = "diamond" # solid | diamond | lines
+# back_image = "reverso.png"
+
+# Caras vectoriales de reserva, y carpeta opcional de PNG por carta.
+face_style = "classic" # classic
+# faces_dir = "caras"
+# Nombres esperados en faces_dir:
+#   {palo}_{rango}.png
+#   palo: clubs, diamonds, hearts, spades
+#   rango: a, 2, 3, 4, 5, 6, 7, 8, 9, 10, j, q, k
+#   ejemplo: hearts_a.png, spades_10.png
