@@ -1,0 +1,98 @@
+name: Compilar
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: ${{ matrix.label }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            label: Windows
+            archive: CualSolitaire-windows-x86_64.zip
+          - os: ubuntu-latest
+            label: Linux
+            archive: CualSolitaire-linux-x86_64.tar.gz
+          - os: macos-latest
+            label: macOS
+            archive: CualSolitaire-macos-aarch64.tar.gz
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Dependencias de Linux
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y pkg-config libgtk-3-dev libxkbcommon-dev libwayland-dev libx11-dev libxcb1-dev libxrandr-dev libxi-dev libxcursor-dev libxinerama-dev libegl1-mesa-dev
+
+      - name: Compilar
+        run: cargo build --release -p cualsol
+
+      - name: Empaquetar
+        shell: bash
+        run: |
+          mkdir -p paquete
+          if [ "${{ runner.os }}" = "Windows" ]; then
+            cp target/release/cualsol.exe paquete/cualsol.exe
+          else
+            cp target/release/cualsol paquete/cualsol
+            chmod +x paquete/cualsol
+          fi
+          cp -R assets themes paquete/
+          cp LICENSE COPYRIGHT README.md paquete/
+          printf '%s\n' \
+            'Descomprimí esta carpeta y ejecutá cualsol desde ahí.' \
+            'El programa busca los mazos y los tapetes en esta misma carpeta.' \
+            'Licencia: GPL-3.0-or-later. Ver LICENSE.' \
+            > paquete/LEEME.txt
+          mkdir -p dist
+          if [ "${{ runner.os }}" = "Windows" ]; then
+            (cd paquete && powershell -NoProfile -Command "Compress-Archive -Path * -DestinationPath ../dist/${{ matrix.archive }} -Force")
+          else
+            tar -C paquete -czf "dist/${{ matrix.archive }}" .
+          fi
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.archive }}
+          path: dist/${{ matrix.archive }}
+          if-no-files-found: error
+
+  release:
+    name: Publicar release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          generate_release_notes: true
+          body: |
+            Binarios de Cual Solitaire para Windows (x86_64), Linux (x86_64) y macOS (Apple Silicon).
+
+            Descomprimí el archivo de tu sistema y ejecutá `cualsol` dentro de esa carpeta.
+
+            Licencia GPL-3.0-or-later. El código de esta versión es el de la etiqueta.
