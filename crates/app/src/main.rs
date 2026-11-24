@@ -98,7 +98,9 @@ struct Flight {
     secs: f64,
     stagger: f64,
     conceal: Option<Hidden>,
-    foundation: Option<usize>,
+    foundation: Option<(usize, Option<Card>)>,
+    freecell: Option<usize>,
+    completed: Option<usize>,
     waste_hide: usize,
 }
 
@@ -249,7 +251,6 @@ impl CualApp {
             app.deal(table);
         }
         app.textures.reload(&cc.egui_ctx, &app.theme);
-        app.warm(&cc.egui_ctx);
         app
     }
 
@@ -393,6 +394,8 @@ impl CualApp {
             stagger,
             conceal: None,
             foundation: None,
+            freecell: None,
+            completed: None,
             waste_hide: count,
         });
         ctx.request_repaint();
@@ -470,6 +473,7 @@ impl CualApp {
             }
             KMove::Draw | KMove::Recycle => return false,
         };
+        let previous_foundation = foundation.map(|index| (index, game.foundations[index]));
         if game.apply(movement).is_err() {
             return false;
         }
@@ -492,7 +496,9 @@ impl CualApp {
             secs: FLIGHT_SECS,
             stagger: 0.0,
             conceal,
-            foundation,
+            foundation: previous_foundation,
+            freecell: None,
+            completed: None,
             waste_hide: 0,
         });
         ctx.request_repaint();
@@ -517,7 +523,7 @@ impl CualApp {
         }
         let after = spider_board(self.play_area, game);
         let to_rects = if game.completed > completed {
-            completed_rects(self.play_area, after.card, cards.len())
+            vec![paint::completed_rect(self.play_area, after.card, completed as usize); cards.len()]
         } else {
             let start = after.piles[to].cards.len().saturating_sub(count);
             after.piles[to].cards[start..].to_vec()
@@ -534,6 +540,8 @@ impl CualApp {
                 from_row: after.piles[to].cards.len().saturating_sub(count),
             }),
             foundation: None,
+            freecell: None,
+            completed: Some(completed as usize).filter(|_| game.completed > completed),
             waste_hide: 0,
         });
         ctx.request_repaint();
@@ -577,12 +585,13 @@ impl CualApp {
             }
             FreeMove::CascadeToCascade { .. } => return false,
         };
+        let foundations_before = game.foundations;
         if game.apply(movement).is_err() {
             return false;
         }
         let after = freecell_board(self.play_area, game);
-        let (to_rects, conceal, foundation) = match movement {
-            FreeMove::ToFoundation { from } => {
+        let (to_rects, conceal, foundation, freecell) = match movement {
+            FreeMove::ToFoundation { .. } => {
                 let card = *cards.last().unwrap_or(&Card::new(Suit::Spades, Rank::Ace));
                 let index = foundation_index(card);
                 let rect = after
@@ -591,11 +600,11 @@ impl CualApp {
                     .find(|extra| extra.kind == ExtraKind::Foundation(index))
                     .map(|extra| extra.rect)
                     .unwrap_or(fallback);
-                (vec![rect], None, Some(index))
+                (vec![rect], None, Some((index, foundations_before[index])), None)
             }
             FreeMove::Run { to, count, .. } => {
                 let start = after.piles[to].cards.len().saturating_sub(count);
-                (after.piles[to].cards[start..].to_vec(), Some(Hidden { column: to, from_row: start }), None)
+                (after.piles[to].cards[start..].to_vec(), Some(Hidden { column: to, from_row: start }), None, None)
             }
             FreeMove::CascadeToFreecell { cell, .. } | FreeMove::FreecellToFreecell { to: cell, .. } => {
                 let rect = after
@@ -604,11 +613,11 @@ impl CualApp {
                     .find(|extra| extra.kind == ExtraKind::FreeCell(cell))
                     .map(|extra| extra.rect)
                     .unwrap_or(fallback);
-                (vec![rect], None, None)
+                (vec![rect], None, None, Some(cell))
             }
             FreeMove::FreecellToCascade { to, .. } => {
                 let start = after.piles[to].cards.len().saturating_sub(1);
-                (after.piles[to].cards[start..].to_vec(), Some(Hidden { column: to, from_row: start }), None)
+                (after.piles[to].cards[start..].to_vec(), Some(Hidden { column: to, from_row: start }), None, None)
             }
             FreeMove::CascadeToCascade { .. } => return false,
         };
@@ -621,6 +630,8 @@ impl CualApp {
             stagger: 0.0,
             conceal,
             foundation,
+            freecell,
+            completed: None,
             waste_hide: 0,
         });
         ctx.request_repaint();
@@ -1078,7 +1089,7 @@ impl eframe::App for CualApp {
                 let hidden_cell = self.drag.as_ref().and_then(|drag| match drag.source {
                     DragSource::FreeCell(cell) => Some(cell),
                     _ => None,
-                });
+                }).or_else(|| self.flight.as_ref().and_then(|flight| flight.freecell));
                 match &self.table {
                     Table::Spider(game) => {
                         draw_spider(
@@ -1091,6 +1102,7 @@ impl eframe::App for CualApp {
                             ctx,
                             hidden,
                             self.flight.as_ref().and_then(|flight| flight.conceal),
+                            self.flight.as_ref().and_then(|flight| flight.completed),
                         )
                     }
                     Table::FreeCell(game) => draw_freecell(
@@ -1119,6 +1131,7 @@ impl eframe::App for CualApp {
                     ),
                     Table::Hearts(_) => {}
                 }
+                self.draw_card_preview(ctx, &painter, &board);
                 if let Some(flight) = &self.flight {
                     let now = ctx.input(|input| input.time);
                     for (index, card) in flight.cards.iter().enumerate() {
@@ -1132,7 +1145,8 @@ impl eframe::App for CualApp {
                         let to = flight.to.get(index).or(flight.to.last());
                         if let (Some(from), Some(to)) = (from, to) {
                             let origin = from.min + (to.min - from.min) * eased;
-                            let rect = Rect::from_min_size(origin, from.size());
+                            let size = from.size() + (to.size() - from.size()) * eased;
+                            let rect = Rect::from_min_size(origin, size);
                             draw_face(&painter, rect, *card, &self.theme, &mut self.textures, ctx, true);
                         }
                     }
@@ -1268,7 +1282,7 @@ impl CualApp {
         let pressed = ctx.input(|input| input.pointer.primary_pressed());
         let released = ctx.input(|input| input.pointer.primary_released());
         let over_ui = ctx.wants_pointer_input()
-            || pointer.is_some_and(|pos| blocks_table(ctx, pos));
+            || pointer.is_some_and(|pos| blocks_table(ctx, pos, self.show_games, self.show_options));
         if self.flight.is_some() || self.win.is_some() {
             return;
         }
@@ -1311,6 +1325,53 @@ impl CualApp {
             }
             self.press = None;
         }
+    }
+
+    fn draw_card_preview(&mut self, ctx: &egui::Context, painter: &egui::Painter, board: &Board) {
+        if self.drag.is_some() || self.flight.is_some() || self.win.is_some() {
+            return;
+        }
+        let (pointer, still, pressed) = ctx.input(|input| {
+            (
+                input.pointer.hover_pos(),
+                input.pointer.time_since_last_movement(),
+                input.pointer.any_down(),
+            )
+        });
+        let Some(pos) = pointer else { return };
+        if pressed || ctx.wants_pointer_input() || blocks_table(ctx, pos, self.show_games, self.show_options) {
+            return;
+        }
+        let Some(GeomHit::Card { column, row }) = hit(board, pos) else { return };
+        let pile = &board.piles[column];
+        if row + 1 == pile.cards.len() {
+            return;
+        }
+        let card = match &self.table {
+            Table::FreeCell(game) => game.cascades[column].get(row).map(|placed| placed.card),
+            Table::Spider(game) => game.tableau[column].get(row)
+                .filter(|placed| placed.face_up)
+                .map(|placed| placed.card),
+            Table::Klondike(game) => game.tableau[column].get(row)
+                .filter(|placed| placed.face_up)
+                .map(|placed| placed.card),
+            Table::Hearts(_) => None,
+        };
+        let Some(card) = card else { return };
+        const DELAY: f32 = 0.35;
+        if still < DELAY {
+            ctx.request_repaint_after(std::time::Duration::from_secs_f32(DELAY - still));
+            return;
+        }
+        let card_rect = pile.cards[row];
+        let lift = (board.card.y * 0.1).min(card_rect.top() - self.play_area.top());
+        let rect = card_rect.translate(Vec2::new(0.0, -lift));
+        painter.rect_filled(
+            rect.expand(2.0).translate(Vec2::new(0.0, 3.0)),
+            5.0,
+            egui::Color32::from_black_alpha(135),
+        );
+        draw_face(painter, rect, card, &self.theme, &mut self.textures, ctx, true);
     }
 
     fn quick_move(&mut self, board: &Board, pos: Pos2, ctx: &egui::Context) {
@@ -1880,15 +1941,72 @@ fn game_tile(
     response.clicked()
 }
 
-fn blocks_table(ctx: &egui::Context, pos: Pos2) -> bool {
-    const IDS: &[&str] = &["ventana-opciones", "ventana-juegos", "barra", "victoria"];
+fn blocks_table(ctx: &egui::Context, pos: Pos2, show_games: bool, show_options: bool) -> bool {
+    let areas = [
+        ("barra", true),
+        ("ventana-juegos", show_games),
+        ("ventana-opciones", show_options),
+    ];
     ctx.memory(|memory| {
-        IDS.iter().any(|id| {
-            memory
-                .area_rect(egui::Id::new(*id))
-                .is_some_and(|rect| rect.contains(pos))
+        areas.into_iter().any(|(id, visible)| {
+            visible && memory.area_rect(egui::Id::new(id)).is_some_and(|rect| rect.contains(pos))
         })
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn freecell_quick_move_prefers_a_matching_column() {
+        use cualsol_freecell::Placed;
+
+        let mut game = FreeCell {
+            seed: 0,
+            cascades: Default::default(),
+            freecells: Default::default(),
+            foundations: Default::default(),
+        };
+        let four = Card::new(Suit::Diamonds, Rank::Four);
+        game.cascades[1] = vec![
+            Placed { card: four },
+            Placed { card: Card::new(Suit::Clubs, Rank::Three) },
+        ];
+        game.cascades[2] = vec![Placed { card: Card::new(Suit::Clubs, Rank::Five) }];
+        assert_eq!(
+            freecell_quick_cascade(&game, 1, 0),
+            Some(FreeMove::Run { from: 1, count: 2, to: 2 }),
+        );
+
+        game.freecells[0] = Some(four);
+        assert_eq!(
+            freecell_quick_cell(&game, 0),
+            Some(FreeMove::FreecellToCascade { cell: 0, to: 2 }),
+        );
+
+        game.cascades[2].clear();
+        assert_eq!(
+            freecell_quick_cascade(&game, 1, 0),
+            Some(FreeMove::Run { from: 1, count: 2, to: 0 }),
+        );
+    }
+
+    #[test]
+    fn closed_game_picker_does_not_block_table_input() {
+        let ctx = egui::Context::default();
+        let id = egui::Id::new("ventana-juegos");
+        let _ = ctx.run(egui::RawInput::default(), |ctx| {
+            egui::Area::new(id).show(ctx, |ui| {
+                ui.allocate_space(egui::vec2(200.0, 100.0));
+            });
+        });
+        let _ = ctx.run(egui::RawInput::default(), |_| {});
+
+        let pos = ctx.memory(|memory| memory.area_rect(id).expect("cached picker rectangle").center());
+        assert!(blocks_table(&ctx, pos, true, false));
+        assert!(!blocks_table(&ctx, pos, false, false));
+    }
 }
 
 fn open_default_theme() -> Theme {
@@ -1902,14 +2020,6 @@ fn default_theme_path() -> PathBuf {
         return from_cwd;
     }
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../../themes/clasico/theme.toml")
-}
-
-fn completed_rects(area: Rect, card: Vec2, count: usize) -> Vec<Rect> {
-    let mini = Vec2::new(card.x * 0.62, card.y * 0.62);
-    let origin = Pos2::new(area.left() + 8.0, area.bottom() - mini.y - 8.0);
-    (0..count)
-        .map(|index| Rect::from_min_size(origin + Vec2::new(index as f32 * 6.0, 0.0), mini))
-        .collect()
 }
 
 fn spider_quick(game: &Spider, column: usize, row: usize) -> Option<SpiderMove> {
@@ -1941,6 +2051,15 @@ fn spider_quick(game: &Spider, column: usize, row: usize) -> Option<SpiderMove> 
     })
 }
 
+fn freecell_quick_columns(game: &FreeCell) -> impl Iterator<Item = usize> + '_ {
+    [false, true].into_iter().flat_map(|empty| {
+        game.cascades
+            .iter()
+            .enumerate()
+            .filter_map(move |(index, column)| (column.is_empty() == empty).then_some(index))
+    })
+}
+
 fn freecell_quick_cascade(game: &FreeCell, column: usize, row: usize) -> Option<FreeMove> {
     let count = game.liftable_from(column, row)?;
     if count == 1 && game.cascades[column].last().is_some_and(|placed| game.accepts_foundation(placed.card)) {
@@ -1948,7 +2067,7 @@ fn freecell_quick_cascade(game: &FreeCell, column: usize, row: usize) -> Option<
             from: Source::Cascade(column),
         });
     }
-    for to in 0..cualsol_freecell::CASCADES {
+    for to in freecell_quick_columns(game) {
         if to == column {
             continue;
         }
@@ -1982,7 +2101,7 @@ fn freecell_quick_cell(game: &FreeCell, cell: usize) -> Option<FreeMove> {
             from: Source::Freecell(cell),
         });
     }
-    for to in 0..cualsol_freecell::CASCADES {
+    for to in freecell_quick_columns(game) {
         let mut trial = game.clone();
         if trial.apply(FreeMove::FreecellToCascade { cell, to }).is_ok() {
             return Some(FreeMove::FreecellToCascade { cell, to });

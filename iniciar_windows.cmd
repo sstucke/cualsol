@@ -8,10 +8,10 @@ if errorlevel 1 (
     if exist "%%D\mingw64\bin\gcc.exe" set "PATH=%%D\mingw64\bin;%PATH%"
   )
 )
-set "APP=%~dp0target\debug\cualsol.exe"
+set "APP=%~dp0target\release\cualsol.exe"
 if not exist "%APP%" (
   echo Compilando Cual Solitaire...
-  cargo build -p cualsol
+  cargo build --release --locked -p cualsol
   if errorlevel 1 (
     echo.
     echo No se pudo compilar.

@@ -106,23 +106,14 @@ pub struct Hidden {
 }
 
 pub fn spider_board(area: Rect, game: &Spider) -> Board {
-    let tallest = game
-        .tableau
-        .iter()
-        .map(|column| column.len())
-        .max()
-        .unwrap_or(1)
-        .max(1) as f32;
-    let card = fit_card(area, COLUMNS as f32, 2.15 + (tallest - 1.0) * FAN);
+    let card = fit_card(area, COLUMNS as f32, 4.5);
     let width = COLUMNS as f32 * card.x + (COLUMNS - 1) as f32 * GAP;
     let origin = Pos2::new(area.center().x - width / 2.0, area.top() + card.y + 12.0);
     let mut piles = Vec::with_capacity(COLUMNS);
     for (index, column) in game.tableau.iter().enumerate() {
         let x = origin.x + index as f32 * (card.x + GAP);
         let slot = Rect::from_min_size(Pos2::new(x, origin.y), card);
-        let cards = (0..column.len())
-            .map(|row| Rect::from_min_size(Pos2::new(x, origin.y + row as f32 * card.y * FAN), card))
-            .collect();
+        let cards = stack_rects(slot, column.len(), area.bottom());
         piles.push(Pile { index, slot, cards });
     }
     let stock = Rect::from_min_size(Pos2::new(area.left() + 8.0, area.top() + 8.0), card);
@@ -137,14 +128,7 @@ pub fn spider_board(area: Rect, game: &Spider) -> Board {
 }
 
 pub fn freecell_board(area: Rect, game: &FreeCell) -> Board {
-    let tallest = game
-        .cascades
-        .iter()
-        .map(|column| column.len())
-        .max()
-        .unwrap_or(1)
-        .max(1) as f32;
-    let card = fit_card(area, 8.0, 2.2 + (tallest - 1.0) * FAN);
+    let card = fit_card(area, 8.0, 4.5);
     let width = 8.0 * card.x + 7.0 * GAP;
     let left = area.center().x - width / 2.0;
     let top = area.top() + 8.0;
@@ -166,11 +150,7 @@ pub fn freecell_board(area: Rect, game: &FreeCell) -> Board {
     for (index, column) in game.cascades.iter().enumerate() {
         let x = left + index as f32 * (card.x + GAP);
         let slot = Rect::from_min_size(Pos2::new(x, cascade_top), card);
-        let cards = (0..column.len())
-            .map(|row| {
-                Rect::from_min_size(Pos2::new(x, cascade_top + row as f32 * card.y * FAN), card)
-            })
-            .collect();
+        let cards = stack_rects(slot, column.len(), area.bottom());
         piles.push(Pile { index, slot, cards });
     }
     Board { card, piles, extras }
@@ -187,14 +167,7 @@ pub fn waste_fan(slot: Rect, count: usize) -> Vec<Rect> {
 }
 
 pub fn klondike_board(area: Rect, game: &cualsol_klondike::Game) -> Board {
-    let tallest = game
-        .tableau
-        .iter()
-        .map(|column| column.len())
-        .max()
-        .unwrap_or(1)
-        .max(1) as f32;
-    let card = fit_card(area, 7.0, 2.2 + (tallest - 1.0) * FAN);
+    let card = fit_card(area, 7.0, 4.5);
     let width = 7.0 * card.x + 6.0 * GAP;
     let left = area.center().x - width / 2.0;
     let top = area.top() + 8.0;
@@ -222,9 +195,7 @@ pub fn klondike_board(area: Rect, game: &cualsol_klondike::Game) -> Board {
     for (index, column) in game.tableau.iter().enumerate() {
         let x = left + index as f32 * (card.x + GAP);
         let slot = Rect::from_min_size(Pos2::new(x, cascade_top), card);
-        let cards = (0..column.len())
-            .map(|row| Rect::from_min_size(Pos2::new(x, cascade_top + row as f32 * card.y * FAN), card))
-            .collect();
+        let cards = stack_rects(slot, column.len(), area.bottom());
         piles.push(Pile { index, slot, cards });
     }
     Board { card, piles, extras }
@@ -239,7 +210,7 @@ pub fn draw_klondike(
     ctx: &egui::Context,
     hidden: Option<Hidden>,
     conceal: Option<Hidden>,
-    hide_foundation: Option<usize>,
+    hide_foundation: Option<(usize, Option<Card>)>,
     hide_waste: usize,
 ) {
     for extra in &board.extras {
@@ -275,8 +246,8 @@ pub fn draw_klondike(
                     );
                 }
             }
-            ExtraKind::Foundation(index) => match game.foundations[index] {
-                Some(card) if hide_foundation != Some(index) => {
+            ExtraKind::Foundation(index) => match foundation_top(game.foundations[index], index, hide_foundation) {
+                Some(card) => {
                     draw_face(painter, extra.rect, card, theme, textures, ctx, true)
                 }
                 _ => empty_slot(painter, extra.rect),
@@ -313,8 +284,7 @@ pub fn hit(board: &Board, pos: Pos2) -> Option<GeomHit> {
     }
     for pile in board.piles.iter().rev() {
         for (row, rect) in pile.cards.iter().enumerate().rev() {
-            let exposed = exposed_rect(*rect, row + 1 == pile.cards.len(), board.card.y * FAN);
-            if exposed.contains(pos) {
+            if rect.contains(pos) {
                 return Some(GeomHit::Card {
                     column: pile.index,
                     row,
@@ -365,11 +335,36 @@ pub fn extra_at(board: &Board, pos: Pos2) -> Option<ExtraKind> {
         .map(|extra| extra.kind)
 }
 
-fn exposed_rect(rect: Rect, is_top: bool, fan: f32) -> Rect {
-    if is_top {
-        rect
-    } else {
-        Rect::from_min_size(rect.min, Vec2::new(rect.width(), fan))
+fn stack_rects(slot: Rect, count: usize, bottom: f32) -> Vec<Rect> {
+    let preferred = slot.height() * FAN;
+    let room = (bottom - slot.bottom()).max(0.0);
+    let step = preferred.min(room / count.saturating_sub(1).max(1) as f32);
+
+    (0..count)
+        .map(|row| slot.translate(Vec2::new(0.0, row as f32 * step)))
+        .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn long_pile_fits_without_moving_other_cards() {
+        let area = Rect::from_min_size(Pos2::ZERO, Vec2::new(1100.0, 650.0));
+        let mut game = FreeCell::deal(42);
+        let before = freecell_board(area, &game);
+        for column in 1..7 {
+            let cards = std::mem::take(&mut game.cascades[column]);
+            game.cascades[0].extend(cards);
+        }
+        let after = freecell_board(area, &game);
+        assert_eq!(before.card, after.card);
+        assert_eq!(before.piles[7].cards, after.piles[7].cards);
+        assert!(after.piles[0].cards.last().unwrap().bottom() <= area.bottom() + 0.01);
+        let cards = &after.piles[0].cards;
+        let pos = Pos2::new(cards[0].center().x, (cards[0].top() + cards[1].top()) / 2.0);
+        assert_eq!(hit(&after, pos), Some(GeomHit::Card { column: 0, row: 0 }));
     }
 }
 
@@ -387,6 +382,23 @@ pub fn draw_tablecloth(painter: &Painter, rect: Rect, theme: &Theme, textures: &
     }
 }
 
+fn foundation_top(
+    current: Option<Card>,
+    index: usize,
+    in_flight: Option<(usize, Option<Card>)>,
+) -> Option<Card> {
+    match in_flight {
+        Some((destination, previous)) if index == destination => previous,
+        _ => current,
+    }
+}
+
+pub fn completed_rect(area: Rect, card: Vec2, index: usize) -> Rect {
+    let mini = card * 0.62;
+    let origin = Pos2::new(area.left() + 8.0, area.bottom() - mini.y - 8.0);
+    Rect::from_min_size(origin + Vec2::new(index as f32 * 16.0, 0.0), mini)
+}
+
 pub fn draw_spider(
     painter: &Painter,
     area: Rect,
@@ -397,6 +409,7 @@ pub fn draw_spider(
     ctx: &egui::Context,
     hidden: Option<Hidden>,
     conceal: Option<Hidden>,
+    hide_completed: Option<usize>,
 ) {
     for pile in &board.piles {
         let column = &game.tableau[pile.index];
@@ -434,11 +447,9 @@ pub fn draw_spider(
             );
         }
     }
-    let mini = Vec2::new(board.card.x * 0.62, board.card.y * 0.62);
-    let origin = Pos2::new(area.left() + 8.0, area.bottom() - mini.y - 8.0);
-    for index in 0..game.completed.min(8) as usize {
-        let rect = Rect::from_min_size(origin + Vec2::new(index as f32 * 16.0, 0.0), mini);
-        draw_back(painter, rect, theme, textures, ctx);
+    let completed = hide_completed.unwrap_or(game.completed as usize).min(8);
+    for index in 0..completed {
+        draw_back(painter, completed_rect(area, board.card, index), theme, textures, ctx);
     }
 }
 
@@ -452,7 +463,7 @@ pub fn draw_freecell(
     hidden_column: Option<Hidden>,
     hidden_cell: Option<usize>,
     conceal: Option<Hidden>,
-    hide_foundation: Option<usize>,
+    hide_foundation: Option<(usize, Option<Card>)>,
 ) {
     for extra in &board.extras {
         match extra.kind {
@@ -462,8 +473,8 @@ pub fn draw_freecell(
                 }
                 _ => empty_slot(painter, extra.rect),
             },
-            ExtraKind::Foundation(index) => match game.foundations[index] {
-                Some(card) if hide_foundation != Some(index) => {
+            ExtraKind::Foundation(index) => match foundation_top(game.foundations[index], index, hide_foundation) {
+                Some(card) => {
                     draw_face(painter, extra.rect, card, theme, textures, ctx, true)
                 }
                 _ => empty_slot(painter, extra.rect),
